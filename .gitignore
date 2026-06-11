@@ -1,0 +1,12 @@
+# dependencies / build output
+node_modules/
+dist/
+levelheaded.zip
+
+# the extension signing key pair — the PUBLIC key lives in manifest.config.ts;
+# the private half must never be committed
+key.pem
+
+# editor / OS noise
+.DS_Store
+*.local

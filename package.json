@@ -1,0 +1,21 @@
+{
+  "name": "levelheaded",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that automatically tames loud sound effects and lifts quiet dialogue on streaming sites.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "zip": "cd dist && zip -r ../levelheaded.zip ."
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.6.1",
+    "@types/chrome": "^0.1.43",
+    "typescript": "^6.0.3",
+    "vite": "^6.4.3",
+    "vitest": "^4.1.8"
+  }
+}
