@@ -1,10 +1,15 @@
 # LevelHeaded — Design
 
-A Manifest V3 Chrome extension that automatically tames loud sound effects and
-lifts quiet dialogue on any site playing video, with zero required user
-interaction. Motivated by film mixes (e.g. *Charlie and the Chocolate
+A Manifest V3 Chrome extension that continuously regulates streaming audio
+with zero required user interaction: loud, overstimulating music and effects
+are dampened throughout — not just at jump-scare spikes — while character
+dialogue is lifted. Motivated by film mixes (e.g. *Charlie and the Chocolate
 Factory*) where effects/score are far louder than dialogue, and by sensitivity
-to sudden loud sounds.
+to sudden and sustained loud sound.
+
+> Goal reframed after first listening tests (2026-06-12, Interstellar docking
+> scene): dialogue lift already convincing in M1; loud-sound dampening must be
+> markedly stronger, and regulation is continuous, not event-driven.
 
 ## Decisions
 
@@ -17,7 +22,9 @@ to sudden loud sounds.
 | CORS risk | Pre-flight: only attach to `blob:`/`data:`/same-origin sources. M3 adds runtime silence detection → persist origin to a never-touch blocklist → auto-reload once | `createMediaElementSource` on non-CORS cross-origin media outputs silence irreversibly. |
 | Volume slider | Compensate via `video.volume` forwarded to the worklet (M2) | The element's volume applies *before* our tap; an uncompensated AGC would fight the player's slider. |
 | Silence gating | AGC freezes gain below ≈ −55 dBFS (M2) | Otherwise dramatic silence becomes amplified room-tone hiss. |
-| Default tuning (M2 "normal") | AGC target ≈ −25 dBFS short-term, boost cap +12 dB, cut cap −15 dB, ~4 s adaptation; limiter ceiling ~8 dB above target, 15 ms lookahead | Strong leveling philosophy: audibly processed is acceptable — that *is* the product. Gentle/aggressive presets bracket it. |
+| Default tuning (M2 "normal") | AGC target ≈ −25 dBFS short-term, boost cap +12 dB, cut cap −15 dB, ~4 s adaptation; limiter/leveler keeps the loudest program ≤ ~6 dB above dialogue level, 15 ms lookahead | Strong leveling philosophy: audibly processed is acceptable — that *is* the product. Gentle (~10 dB window) / aggressive (~3 dB) presets bracket it. |
+| Speech-aware processing (M2) | Mid/side split: constant mid (center/dialogue) boost + side shave; a speech-band energy detector on the mid channel (with ~100 ms hysteresis) ducks the side a further ~4–6 dB while dialogue is active | Film dialogue is center-panned; music/effects are stereo-spread. Delivers "duck the music under speech" with pure sample math — no ML. Mono content degrades gracefully (side = 0). Neural VAD / source separation parked unless this under-delivers. |
+| Artifact priority | Flatness wins over pumping/breathing artifacts | Overstimulation is the problem being solved; a mildly audible gain ride is an acceptable price. Tune release/hysteresis to minimize, never at the cost of leveling. |
 | UI | Minimal popup: global toggle, per-site toggle, strength slider (M3), gain-reduction meter (M3); badge shows active state | Defaults sensible, UI exists for trust and per-site overrides. |
 | Stack | TypeScript + Vite + CRXJS, MV3 | Typed Web Audio/Chrome APIs, AudioWorklet bundling, HMR dev loop. |
 | Distribution | Public GitHub repo; CI builds + release zips; load unpacked | Runtime can't be containerized (Chrome runs it); reproducibility via `.nvmrc` + lockfile + Linux CI runners. Users on any OS download the zip — no toolchain. |
@@ -43,9 +50,12 @@ popup: global toggle, per-site toggle (writes storage; content reacts via onChan
 
 - **M1 — skeleton (done first):** attach to playing media, stock compressor +
   makeup gain, popup toggles, badge, music-site default-off list, CI.
+- **M1.1 — hot-fix (done):** stronger static curve (threshold −45, ratio 8)
+  so continued listening tests measure the continuous-regulation philosophy.
 - **M2 — the real DSP:** AudioWorklet with slow AGC (silence-gated,
-  `video.volume`-compensated) + 15 ms lookahead limiter; harness page +
-  numeric vitest coverage; tuning constants in one module.
+  `video.volume`-compensated) + 15 ms lookahead limiter + mid/side processing
+  with speech-gated side ducking; harness page + numeric vitest coverage;
+  tuning constants in one module.
 - **M3 — robustness & trust:** runtime silence detection → origin blocklist →
   one-time auto-reload; strength slider (gentle/normal/aggressive);
   live gain-reduction meter in the popup; icons.

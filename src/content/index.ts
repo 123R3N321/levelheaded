@@ -19,9 +19,14 @@ interface Chain {
   makeup: GainNode
 }
 
-// Tuned for the "normal" strength philosophy: clearly processed, firmly capped.
-const COMPRESS = { threshold: -30, knee: 12, ratio: 6, attack: 0.003, release: 0.25 }
-const MAKEUP_GAIN = 1.6 // ≈ +4 dB
+// Tuned for continuous regulation, not just spike-catching: low threshold +
+// high ratio flatten sustained loud score/effects, per first listening tests
+// (Interstellar docking scene: dialogue lift good, dampening too weak).
+// Chrome's DynamicsCompressorNode applies automatic makeup gain, which grows
+// with these settings — so the explicit gain is now a slight safety trim
+// against clipping rather than a boost.
+const COMPRESS = { threshold: -45, knee: 15, ratio: 8, attack: 0.003, release: 0.3 }
+const MAKEUP_GAIN = 0.95
 // Transparent settings used while the extension is toggled off — the graph
 // connection is irreversible, so "off" means "audibly do nothing".
 const BYPASS = { threshold: 0, knee: 0, ratio: 1, attack: 0.003, release: 0.25 }
