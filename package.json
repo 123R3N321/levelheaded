@@ -5,8 +5,10 @@
   "description": "Chrome extension that automatically tames loud sound effects and lifts quiet dialogue on streaming sites.",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "dev": "npm run build:worklet && vite",
+    "build": "npm run build:worklet && tsc --noEmit && vite build",
+    "build:worklet": "vite build -c vite.worklet.config.ts",
+    "harness": "npm run build:worklet && vite -c vite.harness.config.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "zip": "cd dist && zip -r ../levelheaded.zip ."

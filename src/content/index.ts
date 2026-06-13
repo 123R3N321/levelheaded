@@ -7,31 +7,26 @@ import {
 } from '../shared/settings'
 
 /**
- * M1 processing chain: source → DynamicsCompressorNode → makeup gain → out.
+ * Preferred chain (M2): source → AudioWorklet (LevelerCore: gated AGC,
+ * mid/side with speech-gated side ducking, lookahead limiter whose ceiling
+ * rides recent program loudness) → destination.
  *
- * The stock compressor with a fast attack catches loud transients; the makeup
- * gain lifts the (now headroom-rich) signal so quiet dialogue lands louder.
- * M2 replaces this with an AudioWorklet implementing the real two-stage
- * AGC + lookahead limiter from DESIGN.md.
+ * Fallback chain (M1): stock compressor + trim, used when a site's CSP
+ * blocks loading the worklet module.
  */
-interface Chain {
-  compressor: DynamicsCompressorNode
-  makeup: GainNode
-}
+type Chain =
+  | { kind: 'worklet'; node: AudioWorkletNode }
+  | { kind: 'compressor'; compressor: DynamicsCompressorNode; makeup: GainNode }
 
-// Tuned for continuous regulation, not just spike-catching: low threshold +
-// high ratio flatten sustained loud score/effects, per first listening tests
-// (Interstellar docking scene: dialogue lift good, dampening too weak).
-// Chrome's DynamicsCompressorNode applies automatic makeup gain, which grows
-// with these settings — so the explicit gain is now a slight safety trim
-// against clipping rather than a boost.
+// Fallback tuning (see DESIGN.md M1.1): continuous flattening via low
+// threshold + high ratio; the stock compressor's automatic makeup gain does
+// the lifting, our explicit gain is a clip-safety trim.
 const COMPRESS = { threshold: -45, knee: 15, ratio: 8, attack: 0.003, release: 0.3 }
-const MAKEUP_GAIN = 0.95
-// Transparent settings used while the extension is toggled off — the graph
-// connection is irreversible, so "off" means "audibly do nothing".
-const BYPASS = { threshold: 0, knee: 0, ratio: 1, attack: 0.003, release: 0.25 }
+const TRIM_GAIN = 0.95
+const BYPASS = { threshold: 0, knee: 0, ratio: 1, attack: 0.003, release: 0.3 }
 
 let ctx: AudioContext | null = null
+let workletReady: Promise<boolean> | null = null
 let settings: Settings | null = null
 const chains = new WeakMap<HTMLMediaElement, Chain>()
 let attachedCount = 0
@@ -50,48 +45,100 @@ function ensureContext(): AudioContext {
   return ctx
 }
 
+/**
+ * Load the worklet module once per page. Tries the extension URL first; some
+ * sites' CSP rejects chrome-extension: script sources, so retry via a blob:
+ * URL of the fetched source. Resolves false if both fail (→ compressor path).
+ */
+function ensureWorklet(audioCtx: AudioContext): Promise<boolean> {
+  if (!workletReady) {
+    workletReady = (async () => {
+      const url = chrome.runtime.getURL('leveler-worklet.js')
+      try {
+        await audioCtx.audioWorklet.addModule(url)
+        return true
+      } catch {
+        try {
+          const source = await (await fetch(url)).text()
+          const blobUrl = URL.createObjectURL(
+            new Blob([source], { type: 'text/javascript' }),
+          )
+          await audioCtx.audioWorklet.addModule(blobUrl)
+          URL.revokeObjectURL(blobUrl)
+          return true
+        } catch {
+          return false
+        }
+      }
+    })()
+  }
+  return workletReady
+}
+
+function active(): boolean {
+  return settings !== null && isActiveOn(settings, location.hostname)
+}
+
 function applySettings(chain: Chain): void {
-  if (!settings) return
-  const params = isActiveOn(settings, location.hostname) ? COMPRESS : BYPASS
-  const gain = isActiveOn(settings, location.hostname) ? MAKEUP_GAIN : 1
+  if (chain.kind === 'worklet') {
+    chain.node.port.postMessage({ type: 'bypass', value: !active() })
+    return
+  }
+  const params = active() ? COMPRESS : BYPASS
   const { compressor, makeup } = chain
   compressor.threshold.value = params.threshold
   compressor.knee.value = params.knee
   compressor.ratio.value = params.ratio
   compressor.attack.value = params.attack
   compressor.release.value = params.release
-  makeup.gain.value = gain
+  makeup.gain.value = active() ? TRIM_GAIN : 1
 }
 
 function reportStatus(): void {
-  const active = settings !== null && isActiveOn(settings, location.hostname)
   chrome.runtime
-    .sendMessage({ type: 'status', attached: attachedCount, active })
+    .sendMessage({ type: 'status', attached: attachedCount, active: active() })
     .catch(() => {
       // Service worker may be asleep mid-navigation; badge catches up on the
       // next event.
     })
 }
 
-function maybeAttach(el: EventTarget | null): void {
-  if (!(el instanceof HTMLMediaElement)) return
-  if (chains.has(el)) return
-  if (!settings || !isActiveOn(settings, location.hostname)) return
-  if (!isSafeToTap(el.currentSrc || el.src, location.origin)) return
-
+async function attach(el: HTMLMediaElement): Promise<void> {
   const audioCtx = ensureContext()
   const source = audioCtx.createMediaElementSource(el)
-  const compressor = audioCtx.createDynamicsCompressor()
-  const makeup = audioCtx.createGain()
-  source.connect(compressor)
-  compressor.connect(makeup)
-  makeup.connect(audioCtx.destination)
 
-  const chain: Chain = { compressor, makeup }
+  let chain: Chain
+  if (await ensureWorklet(audioCtx)) {
+    const node = new AudioWorkletNode(audioCtx, 'levelheaded-leveler')
+    source.connect(node)
+    node.connect(audioCtx.destination)
+    // The element's volume applies before our tap; the worklet divides it out
+    // of its loudness measurement so the AGC never fights the player slider.
+    const sendVolume = () => node.port.postMessage({ type: 'volume', value: el.volume })
+    el.addEventListener('volumechange', sendVolume)
+    sendVolume()
+    chain = { kind: 'worklet', node }
+  } else {
+    const compressor = audioCtx.createDynamicsCompressor()
+    const makeup = audioCtx.createGain()
+    source.connect(compressor)
+    compressor.connect(makeup)
+    makeup.connect(audioCtx.destination)
+    chain = { kind: 'compressor', compressor, makeup }
+  }
+
   chains.set(el, chain)
   applySettings(chain)
   attachedCount++
   reportStatus()
+}
+
+function maybeAttach(el: EventTarget | null): void {
+  if (!(el instanceof HTMLMediaElement)) return
+  if (chains.has(el)) return
+  if (!active()) return
+  if (!isSafeToTap(el.currentSrc || el.src, location.origin)) return
+  void attach(el)
 }
 
 function scanExisting(): void {

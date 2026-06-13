@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>LevelHeaded listening harness</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+      button { display: block; width: 100%; margin: 8px 0; padding: 10px; font-size: 14px; cursor: pointer; }
+      label { display: block; margin: 16px 0; }
+      #meter { font-family: monospace; white-space: pre; color: #555; }
+    </style>
+  </head>
+  <body>
+    <h1>LevelHeaded listening harness</h1>
+    <p>
+      Synthesized scenarios played through the real worklet
+      (<code>public/leveler-worklet.js</code> — run <code>npm run harness</code>).
+      Use the bypass toggle mid-playback to A/B. <strong>Set a moderate system
+      volume first</strong> — the "unprocessed" comparisons are intentionally loud.
+    </p>
+
+    <button data-scenario="whisper-bang">Whisper passage → sudden bang (jump-scare clamp)</button>
+    <button data-scenario="quiet-dialogue">Very quiet dialogue (AGC lift over ~10 s)</button>
+    <button data-scenario="speech-over-music">Speech over stereo music bed (side ducking)</button>
+    <button data-scenario="loud-sustained">Sustained loud score (continuous flattening)</button>
+
+    <label><input type="checkbox" id="bypass" /> Bypass (hear the unprocessed signal)</label>
+    <div id="meter"></div>
+
+    <script type="module">
+      let ctx, node, stopCurrent = () => {}
+
+      async function ensure() {
+        if (ctx) return
+        ctx = new AudioContext()
+        await ctx.audioWorklet.addModule('/leveler-worklet.js')
+        node = new AudioWorkletNode(ctx, 'levelheaded-leveler')
+        node.connect(ctx.destination)
+        node.port.postMessage({ type: 'volume', value: 1 })
+      }
+
+      // Band-limited noise ≈ "speech"; sine pads ≈ "score".
+      function noiseBuffer(seconds) {
+        const buf = ctx.createBuffer(1, seconds * ctx.sampleRate, ctx.sampleRate)
+        const d = buf.getChannelData(0)
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1
+        return buf
+      }
+
+      function playNoise({ db, low, high, start, dur, pan = 0 }) {
+        const src = ctx.createBufferSource()
+        src.buffer = noiseBuffer(dur)
+        const bp = ctx.createBiquadFilter()
+        bp.type = 'bandpass'
+        bp.frequency.value = Math.sqrt(low * high)
+        bp.Q.value = bp.frequency.value / (high - low)
+        const g = ctx.createGain()
+        g.gain.value = Math.pow(10, db / 20) * 3 // rough makeup for bandpass loss
+        const p = ctx.createStereoPanner()
+        p.pan.value = pan
+        src.connect(bp).connect(g).connect(p).connect(node)
+        src.start(ctx.currentTime + start)
+        return src
+      }
+
+      function playTone({ freq, db, start, dur, pan = 0 }) {
+        const osc = ctx.createOscillator()
+        osc.frequency.value = freq
+        const g = ctx.createGain()
+        g.gain.value = Math.pow(10, db / 20) * Math.SQRT2
+        const p = ctx.createStereoPanner()
+        p.pan.value = pan
+        osc.connect(g).connect(p).connect(node)
+        osc.start(ctx.currentTime + start)
+        osc.stop(ctx.currentTime + start + dur)
+        return osc
+      }
+
+      const scenarios = {
+        // 6 s of -45 dB speech-band murmur, then a 0.4 s -6 dB broadband bang.
+        'whisper-bang': () => [
+          playNoise({ db: -45, low: 300, high: 3400, start: 0, dur: 6 }),
+          playNoise({ db: -6, low: 60, high: 8000, start: 6, dur: 0.4 }),
+        ],
+        // -40 dB speech-band murmur for 15 s; listen for the slow lift.
+        'quiet-dialogue': () => [
+          playNoise({ db: -40, low: 300, high: 3400, start: 0, dur: 15 }),
+        ],
+        // Stereo-spread pad + centered speech-band noise entering at 4 s;
+        // the pad should audibly duck under the "voice".
+        'speech-over-music': () => [
+          playTone({ freq: 220, db: -22, start: 0, dur: 12, pan: -0.9 }),
+          playTone({ freq: 277, db: -22, start: 0, dur: 12, pan: 0.9 }),
+          playNoise({ db: -25, low: 300, high: 3400, start: 4, dur: 5, pan: 0 }),
+        ],
+        // -10 dB sustained chord: should settle ~15 dB quieter within seconds.
+        'loud-sustained': () => [
+          playTone({ freq: 110, db: -13, start: 0, dur: 10 }),
+          playTone({ freq: 165, db: -13, start: 0, dur: 10 }),
+        ],
+      }
+
+      for (const btn of document.querySelectorAll('button')) {
+        btn.onclick = async () => {
+          await ensure()
+          stopCurrent()
+          const sources = scenarios[btn.dataset.scenario]()
+          stopCurrent = () => sources.forEach((s) => { try { s.stop() } catch {} })
+        }
+      }
+
+      document.getElementById('bypass').onchange = (e) => {
+        if (node) node.port.postMessage({ type: 'bypass', value: e.target.checked })
+      }
+    </script>
+  </body>
+</html>

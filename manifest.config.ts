@@ -33,4 +33,12 @@ export default defineManifest({
     default_popup: 'src/popup/index.html',
     default_title: 'LevelHeaded',
   },
+  web_accessible_resources: [
+    {
+      // The AudioWorklet module, loaded into page AudioContexts by the
+      // content script.
+      resources: ['leveler-worklet.js'],
+      matches: ['<all_urls>'],
+    },
+  ],
 })

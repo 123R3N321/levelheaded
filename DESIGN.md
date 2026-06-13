@@ -52,10 +52,17 @@ popup: global toggle, per-site toggle (writes storage; content reacts via onChan
   makeup gain, popup toggles, badge, music-site default-off list, CI.
 - **M1.1 — hot-fix (done):** stronger static curve (threshold −45, ratio 8)
   so continued listening tests measure the continuous-regulation philosophy.
-- **M2 — the real DSP:** AudioWorklet with slow AGC (silence-gated,
-  `video.volume`-compensated) + 15 ms lookahead limiter + mid/side processing
-  with speech-gated side ducking; harness page + numeric vitest coverage;
-  tuning constants in one module.
+- **M2 — the real DSP (done):** AudioWorklet (pure-TS `LevelerCore`, fully
+  unit-testable) with slow AGC (silence-gated, `video.volume`-compensated) +
+  15 ms lookahead limiter + mid/side processing with speech-gated side
+  ducking; listening harness (`npm run harness`) + numeric vitest coverage;
+  tuning constants in one module (`src/audio/tuning.ts`). The limiter ceiling
+  rides the rolling program loudness (+`windowDb`), so a spike is defined
+  relative to playback continuity, not an absolute level. The baseline is
+  tracked in the log domain — a power-domain EMA would chase a +26 dB burst
+  within milliseconds and defeat the clamp (caught by the test suite).
+  Falls back to the M1 compressor chain on sites whose CSP blocks worklet
+  loading.
 - **M3 — robustness & trust:** runtime silence detection → origin blocklist →
   one-time auto-reload; strength slider (gentle/normal/aggressive);
   live gain-reduction meter in the popup; icons.

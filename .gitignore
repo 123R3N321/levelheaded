@@ -2,6 +2,7 @@
 node_modules/
 dist/
 levelheaded.zip
+public/leveler-worklet.js
 
 # the extension signing key pair — the PUBLIC key lives in manifest.config.ts;
 # the private half must never be committed
